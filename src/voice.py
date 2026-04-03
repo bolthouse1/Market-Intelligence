@@ -41,28 +41,28 @@ def _has_eleven_key() -> bool:
     return bool(os.environ.get("ELEVENLABS_API_KEY"))
 
 
-def speak(text: str) -> None:
-    """Convert text to speech and play it. Uses ElevenLabs if available, edge-tts as fallback."""
+def speak(text: str) -> bool:
+    """Convert text to speech and play it. Returns True if completed, False if interrupted."""
     clean_text = _clean_for_speech(text)
 
     if _has_eleven_key():
         try:
-            _speak_eleven(clean_text)
-            return
+            return _speak_eleven(clean_text)
         except Exception as e:
             logger.warning(f"ElevenLabs failed, falling back to edge-tts: {e}")
 
     _speak_edge(clean_text)
+    return True
 
 
 def speak_streamed(text_chunks: list[str]) -> None:
-    """Speak text in chunks — starts audio on first chunk while rest generates.
+    """Speak text in chunks. Press any key to interrupt and skip to mic input.
 
     This is the key to feeling fast: Andrew hears the first sentence
     within 1-2 seconds while the rest of the response is still being built.
+    He can interrupt anytime by pressing any key.
     """
     if not _has_eleven_key():
-        # Edge-tts doesn't stream well, so just concatenate and speak
         speak("\n".join(text_chunks))
         return
 
@@ -70,43 +70,44 @@ def speak_streamed(text_chunks: list[str]) -> None:
         clean = _clean_for_speech(chunk)
         if clean.strip():
             try:
-                _speak_eleven(clean)
+                completed = _speak_eleven(clean)
+                if not completed:
+                    # Andrew interrupted — stop speaking remaining chunks
+                    logger.info("Skipping remaining chunks — Andrew interrupted")
+                    return
             except Exception as e:
                 logger.warning(f"Streamed chunk failed: {e}")
                 print(chunk)
 
 
-def _speak_eleven(text: str) -> None:
-    """Generate and play speech via ElevenLabs."""
+def _speak_eleven(text: str) -> bool:
+    """Generate and play speech via ElevenLabs. Returns True if completed, False if interrupted."""
     from elevenlabs.client import ElevenLabs
+    from elevenlabs import VoiceSettings
 
     client = ElevenLabs(api_key=os.environ["ELEVENLABS_API_KEY"])
 
-    # Generate audio with voice settings for natural delivery
-    from elevenlabs import VoiceSettings
     audio_gen = client.text_to_speech.convert(
         voice_id=ELEVEN_VOICE_ID,
         text=text,
         model_id=ELEVEN_MODEL,
         output_format="mp3_44100_128",
         voice_settings=VoiceSettings(
-            stability=0.4,          # Lower = more expressive, less robotic
-            similarity_boost=0.75,  # Keep the voice character
-            style=0.35,             # Add some style/energy
+            stability=0.4,
+            similarity_boost=0.75,
+            style=0.35,
             use_speaker_boost=True,
         ),
     )
 
-    # Collect the streamed bytes
     audio_bytes = b"".join(audio_gen)
 
-    # Play via pygame
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
         f.write(audio_bytes)
         temp_path = f.name
 
     try:
-        _play_audio(temp_path)
+        return _play_audio(temp_path, interruptible=True)
     finally:
         try:
             os.unlink(temp_path)
@@ -135,13 +136,41 @@ def _speak_edge(text: str) -> None:
             pass
 
 
-def _play_audio(path: str) -> None:
-    """Play an audio file and wait for it to finish."""
+def stop_speaking() -> None:
+    """Stop any currently playing audio immediately."""
+    if pygame.mixer.music.get_busy():
+        pygame.mixer.music.stop()
+        logger.info("Audio interrupted")
+
+
+def _play_audio(path: str, interruptible: bool = True) -> bool:
+    """Play an audio file. Returns True if completed, False if interrupted.
+
+    When interruptible=True, listens for keyboard input (Enter key)
+    to stop playback early.
+    """
     pygame.mixer.music.load(path)
     pygame.mixer.music.play()
-    while pygame.mixer.music.get_busy():
-        pygame.time.wait(50)
+
+    if interruptible:
+        import sys
+        import msvcrt  # Windows-only keyboard detection
+
+        while pygame.mixer.music.get_busy():
+            # Check if user pressed a key to interrupt
+            if msvcrt.kbhit():
+                key = msvcrt.getch()
+                pygame.mixer.music.stop()
+                pygame.mixer.music.unload()
+                logger.info("Audio interrupted by user")
+                return False
+            pygame.time.wait(50)
+    else:
+        while pygame.mixer.music.get_busy():
+            pygame.time.wait(50)
+
     pygame.mixer.music.unload()
+    return True
 
 
 def listen(timeout: int = 10, phrase_time_limit: int = 30) -> str | None:
@@ -191,8 +220,8 @@ def _clean_for_speech(text: str) -> str:
     # Clean up currency symbols for better pronunciation
     text = text.replace("€", " euros")
     text = text.replace("£", " pounds")
-    # Make "Braaah" sound right — like "bruh" but drawn out, the way kids say it
-    text = re.sub(r"Braaah?", "Bruhhhhh", text, flags=re.IGNORECASE)
+    # Make "Braaah" sound right — drawn out "ahhh" like the kids say it
+    text = re.sub(r"Braaah?", "Brah ahhhhh", text, flags=re.IGNORECASE)
     # Add natural pauses after big numbers (helps pacing)
     text = re.sub(r"(\$[\d,.]+\s*(?:billion|million|trillion|B|M))", r"\1.", text)
     # Clean up multiple spaces/newlines
