@@ -1,0 +1,121 @@
+scan_settings:
+  inter_category_delay_seconds: 3
+  max_retries: 3
+  retry_backoff_base: 2
+  model: "claude-sonnet-4-20250514"
+  max_tokens: 4000
+
+categories:
+  transformation_failures:
+    enabled: true
+    priority: 1
+    label: "Transformation Failures"
+    description: "Digital transformation delays, cost overruns, failed initiatives, strategic pivots"
+    industries:
+      - healthcare
+      - medical devices
+      - pharma
+      - imaging
+      - hospital systems
+      - financial services
+      - manufacturing
+      - energy
+    additional_keywords: []
+    outreach_service: "ELPA / Enterprise Transformation"
+
+  leadership_turnover:
+    enabled: true
+    priority: 2
+    label: "Leadership Turnover"
+    description: "CIO/CTO/CDO departures, firings, replacements — especially mid-transformation"
+    industries:
+      - healthcare
+      - medical devices
+      - pharma
+      - financial services
+      - manufacturing
+    additional_keywords: []
+    outreach_service: "Leadership Team Transformation"
+
+  earnings_distress:
+    enabled: true
+    priority: 3
+    label: "Earnings Distress"
+    description: "Restructuring charges, missed guidance, analyst downgrades citing execution risk"
+    industries:
+      - healthcare
+      - medical devices
+      - pharma
+      - financial services
+      - manufacturing
+    additional_keywords: []
+    outreach_service: "Kill the Cost Center / Portfolio Services"
+
+  vendor_breakups:
+    enabled: true
+    priority: 4
+    label: "Vendor/Consultant Breakups"
+    description: "Terminated consulting engagements, fired vendors, abandoned implementations"
+    industries:
+      - healthcare
+      - medical devices
+      - financial services
+      - manufacturing
+    additional_keywords:
+      - EHR
+      - PACS
+      - imaging informatics
+      - SAP
+      - Oracle
+      - Accenture
+      - Deloitte
+    outreach_service: "Managed Services / ELPA"
+
+  regulatory_penalties:
+    enabled: true
+    priority: 5
+    label: "Regulatory & Compliance"
+    description: "CMS penalties, FDA warnings, audit findings related to technology or data"
+    industries:
+      - healthcare
+      - hospital systems
+      - medical devices
+      - financial services
+    additional_keywords:
+      - CMS
+      - FDA
+      - HIPAA
+      - SOX
+      - OCC
+    outreach_service: "Enterprise Transformation"
+
+  new_initiative_funding:
+    enabled: true
+    priority: 6
+    label: "New Initiative Funding"
+    description: "Major digital transformation budgets approved, new program launches, big capital allocations for tech/ops overhauls"
+    industries:
+      - healthcare
+      - medical devices
+      - pharma
+      - financial services
+      - manufacturing
+      - energy
+    additional_keywords:
+      - digital transformation budget
+      - capital allocation
+      - program launch
+      - modernization initiative
+    outreach_service: "ELPA"
+
+email:
+  recipients:
+    - "darin@120vc.com"
+  from_name: "120VC Intel Scanner"
+  subject_prefix: "[INTEL]"
+  smtp_host: "smtp.gmail.com"
+  smtp_port: 587
+
+report:
+  archive_days: 90
+  timezone: "America/Denver"
