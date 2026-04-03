@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import anthropic
 import click
 import yaml
 from dotenv import load_dotenv
@@ -104,11 +105,15 @@ def scan(category: str | None, dry_run: bool, no_email: bool) -> None:
     new_findings = dedup.deduplicate_findings(all_findings, recent)
     click.echo(f"Found {len(all_findings)} total, {len(new_findings)} new after dedup")
 
-    # Store findings
+    # Store findings (is_new already set by deduplicate_findings)
+    new_finding_set = set(id(f) for f in new_findings)
     for finding in all_findings:
         finding["id"] = str(uuid.uuid4())
         finding["scan_id"] = scan_id
         finding["created_at"] = datetime.utcnow().isoformat()
+        finding["is_new"] = id(finding) in new_finding_set
+        if "dedup_hash" not in finding:
+            finding["dedup_hash"] = dedup.compute_dedup_hash(finding["company"], finding["summary"])
         finding["raw_json"] = json.dumps(finding)
         storage.insert_finding(finding)
 
@@ -165,22 +170,19 @@ def brief() -> None:
     click.echo(brief_text)
     click.echo()
 
+    # Check for empty findings
+    if "No scans found" in brief_text or "nothing new today" in brief_text.lower():
+        return
+
     # Build context for follow-up conversation
+    config = _load_config()
+    model = config.get("scan_settings", {}).get("model", "claude-sonnet-4-20250514")
     context = briefing.build_context_for_conversation(scan_id)
 
-    # Log the conversation start
     convo_id = str(uuid.uuid4())
-    storage.log_conversation({
-        "id": convo_id,
-        "scan_id": scan_id,
-        "started_at": datetime.utcnow().isoformat(),
-        "companies_discussed": [],
-        "categories_discussed": [],
-        "findings_explored": [],
-    })
+    convo_start = datetime.utcnow().isoformat()
 
-    # Interactive conversation loop
-    client = __import__("anthropic").Anthropic()
+    client = anthropic.Anthropic()
     messages = [
         {"role": "assistant", "content": brief_text},
     ]
@@ -197,11 +199,10 @@ def brief() -> None:
         if not user_input.strip():
             continue
         if user_input.strip().lower() in ("quit", "exit", "done", "bye", "later"):
-            # Generate sign-off
             messages.append({"role": "user", "content": user_input})
             messages.append({"role": "user", "content": "(Andrew is wrapping up. Give a short sign-off and ask ONE question about how you can improve — keep it real, one sentence.)"})
             response = client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model=model,
                 max_tokens=200,
                 system=context,
                 messages=messages,
@@ -209,18 +210,17 @@ def brief() -> None:
             sign_off = "\n".join(b.text for b in response.content if b.type == "text").strip()
             click.echo(f"\n{sign_off}\n")
 
-            # Update conversation log
+            # Log completed conversation
             storage.log_conversation({
-                "id": str(uuid.uuid4()),
+                "id": convo_id,
                 "scan_id": scan_id,
-                "started_at": datetime.utcnow().isoformat(),
+                "started_at": convo_start,
                 "ended_at": datetime.utcnow().isoformat(),
                 "companies_discussed": companies_discussed,
                 "categories_discussed": categories_discussed,
                 "findings_explored": [],
             })
 
-            # Update preferences based on what was discussed
             for company in companies_discussed:
                 storage.update_preference("company_interest", company, 1.0)
             for cat in categories_discussed:
@@ -240,8 +240,8 @@ def brief() -> None:
                     categories_discussed.append(f["category"])
 
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=800,
+            model=model,
+            max_tokens=300,
             system=context,
             messages=messages,
         )
@@ -299,20 +299,14 @@ def voice_brief(voice_id: str | None, mic: int | None) -> None:
     voice.speak_streamed(paragraphs)
 
     # Build context for conversation
+    config = _load_config()
+    model = config.get("scan_settings", {}).get("model", "claude-sonnet-4-20250514")
     context = briefing.build_context_for_conversation(scan_id)
 
-    # Log conversation
     convo_id = str(uuid.uuid4())
-    storage.log_conversation({
-        "id": convo_id,
-        "scan_id": scan_id,
-        "started_at": datetime.utcnow().isoformat(),
-        "companies_discussed": [],
-        "categories_discussed": [],
-        "findings_explored": [],
-    })
+    convo_start = datetime.utcnow().isoformat()
 
-    client = __import__("anthropic").Anthropic()
+    client = anthropic.Anthropic()
     messages = [{"role": "assistant", "content": brief_text}]
     companies_discussed = []
     categories_discussed = []
@@ -336,7 +330,7 @@ def voice_brief(voice_id: str | None, mic: int | None) -> None:
             messages.append({"role": "user", "content": user_input})
             messages.append({"role": "user", "content": "(Andrew is wrapping up. Give a short sign-off and ask ONE question about how you can improve — keep it real, one sentence.)"})
             response = client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model=model,
                 max_tokens=200,
                 system=context,
                 messages=messages,
@@ -345,7 +339,17 @@ def voice_brief(voice_id: str | None, mic: int | None) -> None:
             click.echo(f"\n{sign_off}\n")
             voice.speak(sign_off)
 
-            # Log preferences
+            # Log completed conversation
+            storage.log_conversation({
+                "id": convo_id,
+                "scan_id": scan_id,
+                "started_at": convo_start,
+                "ended_at": datetime.utcnow().isoformat(),
+                "companies_discussed": companies_discussed,
+                "categories_discussed": categories_discussed,
+                "findings_explored": [],
+            })
+
             for company in companies_discussed:
                 storage.update_preference("company_interest", company, 1.0)
             for cat in categories_discussed:
@@ -363,8 +367,8 @@ def voice_brief(voice_id: str | None, mic: int | None) -> None:
                     categories_discussed.append(f["category"])
 
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=800,
+            model=model,
+            max_tokens=300,
             system=context,
             messages=messages,
         )
@@ -492,9 +496,14 @@ def stats() -> None:
 
 @cli.command()
 @click.option("--days", "-d", default=90, help="Delete data older than N days")
-def prune(days: int) -> None:
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+def prune(days: int, yes: bool) -> None:
     """Delete old findings and reports."""
     storage.init_db()
+    if not yes:
+        if not click.confirm(f"Delete findings and reports older than {days} days?"):
+            click.echo("Cancelled.")
+            return
     deleted = storage.prune_old_data(days)
     click.echo(f"Pruned {deleted} findings older than {days} days.")
 

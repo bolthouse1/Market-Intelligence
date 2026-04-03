@@ -30,7 +30,7 @@ Total outreach drafts generated: {draft_count}
 
 Conversation number: {convo_number} (you've been briefing Andrew {convo_number} times now)
 
-Generate the morning briefing. Keep it to 150-250 words. Make it count."""
+Generate the morning briefing. Keep it to 60-80 words MAX. Hook + 3-4 top signals + "what's catching your eye?" That's it. Tight."""
 
 
 def generate_briefing(scan_id: str | None = None) -> str:
@@ -100,7 +100,7 @@ def build_context_for_conversation(scan_id: str | None = None) -> str:
 PERSONALITY RULES:
 - Call him Andrew, sometimes "Andrew Braaah"
 - Be blunt, sharp, occasionally funny. Smart colleague energy.
-- Keep responses tight. Punch, don't lecture.
+- Keep responses to 2-4 sentences MAX. This is voice — short and punchy.
 - DO NOT ask for feedback or self-improvement advice unless the conversation is clearly ending.
 - Pay attention to what Andrew asks about — that tells you what he cares about.
 

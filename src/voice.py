@@ -4,14 +4,13 @@ Streams audio for fast response — starts speaking before the full text is gene
 """
 
 import asyncio
-import io
 import logging
 import os
 import re
+import subprocess
 import tempfile
 import threading
 
-import pygame
 import speech_recognition as sr
 
 logger = logging.getLogger(__name__)
@@ -24,9 +23,6 @@ ELEVEN_SPEED = 1.2  # Quick but natural
 # Edge-tts fallback config
 EDGE_VOICE = "en-US-GuyNeural"
 EDGE_RATE = "+5%"
-
-# Initialize pygame mixer
-pygame.mixer.init(frequency=44100, size=-16, channels=1, buffer=2048)
 
 
 def set_eleven_voice(voice_id: str) -> None:
@@ -136,40 +132,68 @@ def _speak_edge(text: str) -> None:
             pass
 
 
+_current_process = None
+
+
 def stop_speaking() -> None:
     """Stop any currently playing audio immediately."""
-    if pygame.mixer.music.get_busy():
-        pygame.mixer.music.stop()
+    global _current_process
+    if _current_process and _current_process.poll() is None:
+        _current_process.terminate()
+        _current_process = None
         logger.info("Audio interrupted")
 
 
 def _play_audio(path: str, interruptible: bool = True) -> bool:
-    """Play an audio file. Returns True if completed, False if interrupted.
+    """Play an audio file using Windows Media Player. Returns True if completed, False if interrupted."""
+    global _current_process
+    import time
 
-    When interruptible=True, listens for keyboard input (Enter key)
-    to stop playback early.
-    """
-    pygame.mixer.music.load(path)
-    pygame.mixer.music.play()
+    # Use PowerShell to play audio through Windows media API
+    ps_script = f"""
+Add-Type -AssemblyName presentationCore
+$player = New-Object System.Windows.Media.MediaPlayer
+$player.Open([Uri]"{path}")
+$player.Play()
+Start-Sleep -Milliseconds 500
+while ($player.Position -lt $player.NaturalDuration.TimeSpan) {{
+    Start-Sleep -Milliseconds 100
+}}
+$player.Close()
+"""
+    _current_process = subprocess.Popen(
+        ["powershell", "-NoProfile", "-Command", ps_script],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
     if interruptible:
-        import sys
-        import msvcrt  # Windows-only keyboard detection
+        print("  [press Enter to interrupt]")
+        interrupted = False
 
-        while pygame.mixer.music.get_busy():
-            # Check if user pressed a key to interrupt
-            if msvcrt.kbhit():
-                key = msvcrt.getch()
-                pygame.mixer.music.stop()
-                pygame.mixer.music.unload()
-                logger.info("Audio interrupted by user")
+        def _wait_for_key():
+            nonlocal interrupted
+            try:
+                input()  # blocks until Enter
+                interrupted = True
+            except EOFError:
+                pass
+
+        key_thread = threading.Thread(target=_wait_for_key, daemon=True)
+        key_thread.start()
+
+        while _current_process.poll() is None:
+            if interrupted:
+                _current_process.kill()
+                _current_process.wait()
+                _current_process = None
+                print("  [interrupted]")
                 return False
-            pygame.time.wait(50)
+            time.sleep(0.05)
     else:
-        while pygame.mixer.music.get_busy():
-            pygame.time.wait(50)
+        _current_process.wait()
 
-    pygame.mixer.music.unload()
+    _current_process = None
     return True
 
 

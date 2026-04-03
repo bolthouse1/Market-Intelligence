@@ -53,7 +53,7 @@ def send_report(
 
     logger.info(f"Sending report to {', '.join(recipients)} via {host}:{port}")
 
-    with smtplib.SMTP(host, port) as server:
+    with smtplib.SMTP(host, port, timeout=10) as server:
         server.starttls()
         server.login(smtp_user, smtp_password)
         server.send_message(msg)
