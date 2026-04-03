@@ -110,7 +110,7 @@ categories:
 
 email:
   recipients:
-    - "darin@120vc.com"
+    - "andrew@brickandmatter.com"
   from_name: "120VC Intel Scanner"
   subject_prefix: "[INTEL]"
   smtp_host: "smtp.gmail.com"
