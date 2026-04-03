@@ -11,7 +11,7 @@ import click
 import yaml
 from dotenv import load_dotenv
 
-from . import briefing, dedup, emailer, outreach, parser, reporter, scanner, storage
+from . import briefing, dedup, emailer, outreach, parser, reporter, scanner, storage, voice
 
 load_dotenv()
 
@@ -249,6 +249,105 @@ def brief() -> None:
         reply = "\n".join(b.text for b in response.content if b.type == "text").strip()
         messages.append({"role": "assistant", "content": reply})
         click.echo(f"\n{reply}\n")
+
+
+@cli.command("voice-brief")
+@click.option("--voice", default="en-US-GuyNeural", help="TTS voice (try en-US-BrianNeural, en-US-AndrewNeural)")
+def voice_brief(voice: str) -> None:
+    """Launch voice-powered morning briefing — speak and listen."""
+    storage.init_db()
+
+    scan_id = storage.get_latest_scan_id()
+    if not scan_id:
+        click.echo("No scans found. Run a scan first: python -m src.cli scan")
+        return
+
+    voice_mod = voice  # rename to avoid shadowing
+    voice_module = __import__("src.voice", fromlist=["voice"])
+    voice_module.set_voice(voice_mod)
+
+    click.echo("Loading today's intel...\n")
+
+    # Generate and speak the briefing
+    brief_text = briefing.generate_briefing(scan_id)
+    click.echo(brief_text)
+    click.echo()
+    voice_module.speak(brief_text)
+
+    # Build context for conversation
+    context = briefing.build_context_for_conversation(scan_id)
+
+    # Log conversation
+    convo_id = str(uuid.uuid4())
+    storage.log_conversation({
+        "id": convo_id,
+        "scan_id": scan_id,
+        "started_at": datetime.utcnow().isoformat(),
+        "companies_discussed": [],
+        "categories_discussed": [],
+        "findings_explored": [],
+    })
+
+    client = __import__("anthropic").Anthropic()
+    messages = [{"role": "assistant", "content": brief_text}]
+    companies_discussed = []
+    categories_discussed = []
+    findings = storage.get_findings_by_scan(scan_id)
+
+    while True:
+        # Listen for Andrew
+        click.echo("\n  [Say something, or press Ctrl+C to exit]\n")
+        user_input = voice_module.listen(timeout=15, phrase_time_limit=60)
+
+        if user_input is None:
+            click.echo("  Didn't catch that. Try again or press Ctrl+C to exit.")
+            continue
+
+        click.echo(f"  Andrew: {user_input}\n")
+
+        # Check for exit
+        exit_words = {"quit", "exit", "done", "bye", "later", "that's it", "we're done", "i'm done", "peace"}
+        if any(word in user_input.lower() for word in exit_words):
+            messages.append({"role": "user", "content": user_input})
+            messages.append({"role": "user", "content": "(Andrew is wrapping up. Give a short sign-off and ask ONE question about how you can improve — keep it real, one sentence.)"})
+            response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=200,
+                system=context,
+                messages=messages,
+            )
+            sign_off = "\n".join(b.text for b in response.content if b.type == "text").strip()
+            click.echo(f"\n{sign_off}\n")
+            voice_module.speak(sign_off)
+
+            # Log preferences
+            for company in companies_discussed:
+                storage.update_preference("company_interest", company, 1.0)
+            for cat in categories_discussed:
+                storage.update_preference("category_interest", cat, 1.0)
+            break
+
+        messages.append({"role": "user", "content": user_input})
+
+        # Track interests
+        for f in findings:
+            if f["company"].lower() in user_input.lower():
+                if f["company"] not in companies_discussed:
+                    companies_discussed.append(f["company"])
+                if f["category"] not in categories_discussed:
+                    categories_discussed.append(f["category"])
+
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=800,
+            system=context,
+            messages=messages,
+        )
+
+        reply = "\n".join(b.text for b in response.content if b.type == "text").strip()
+        messages.append({"role": "assistant", "content": reply})
+        click.echo(f"\n{reply}\n")
+        voice_module.speak(reply)
 
 
 @cli.command()
