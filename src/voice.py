@@ -173,16 +173,37 @@ def _play_audio(path: str, interruptible: bool = True) -> bool:
     return True
 
 
+MIC_DEVICE_INDEX = 0  # Device 0 = Windows Sound Mapper (default input)
+
+
+def set_mic(device_index: int | None) -> None:
+    """Set the microphone device index. None = system default."""
+    global MIC_DEVICE_INDEX
+    MIC_DEVICE_INDEX = device_index
+    if device_index is not None:
+        names = sr.Microphone.list_microphone_names()
+        if device_index < len(names):
+            logger.info(f"Mic set to [{device_index}] {names[device_index]}")
+    else:
+        logger.info("Mic set to system default")
+
+
+def list_mics() -> list[tuple[int, str]]:
+    """List available microphone devices."""
+    return list(enumerate(sr.Microphone.list_microphone_names()))
+
+
 def listen(timeout: int = 10, phrase_time_limit: int = 30) -> str | None:
     """Listen for speech via microphone and return transcribed text."""
     recognizer = sr.Recognizer()
     recognizer.dynamic_energy_threshold = True
+    recognizer.energy_threshold = 300  # Lower = more sensitive
     recognizer.pause_threshold = 1.5
 
     try:
-        with sr.Microphone() as source:
+        with sr.Microphone(device_index=MIC_DEVICE_INDEX) as source:
             print("  [listening...]")
-            recognizer.adjust_for_ambient_noise(source, duration=0.5)
+            recognizer.adjust_for_ambient_noise(source, duration=1.0)
             audio = recognizer.listen(
                 source, timeout=timeout, phrase_time_limit=phrase_time_limit
             )
@@ -220,8 +241,8 @@ def _clean_for_speech(text: str) -> str:
     # Clean up currency symbols for better pronunciation
     text = text.replace("€", " euros")
     text = text.replace("£", " pounds")
-    # Make "Braaah" sound right — drawn out "ahhh" like the kids say it
-    text = re.sub(r"Braaah?", "Brah ahhhhh", text, flags=re.IGNORECASE)
+    # Make "Braaah" sound right — casual drawn out bra-ahh
+    text = re.sub(r"Braaah?", "Brahh ahh", text, flags=re.IGNORECASE)
     # Add natural pauses after big numbers (helps pacing)
     text = re.sub(r"(\$[\d,.]+\s*(?:billion|million|trillion|B|M))", r"\1.", text)
     # Clean up multiple spaces/newlines

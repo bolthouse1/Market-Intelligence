@@ -251,9 +251,20 @@ def brief() -> None:
         click.echo(f"\n{reply}\n")
 
 
+@cli.command("list-mics")
+def list_mics() -> None:
+    """List available microphone devices."""
+    mics = voice.list_mics()
+    click.echo("Available microphones:")
+    for idx, name in mics:
+        click.echo(f"  [{idx}] {name}")
+    click.echo(f"\nUse --mic N with voice-brief to select one.")
+
+
 @cli.command("voice-brief")
 @click.option("--voice-id", default=None, help="ElevenLabs voice ID override")
-def voice_brief(voice_id: str | None) -> None:
+@click.option("--mic", default=None, type=int, help="Microphone device index (run list-mics to see options)")
+def voice_brief(voice_id: str | None, mic: int | None) -> None:
     """Launch voice-powered morning briefing — speak and listen.
 
     Uses ElevenLabs for natural voice (set ELEVENLABS_API_KEY in .env).
@@ -268,6 +279,8 @@ def voice_brief(voice_id: str | None) -> None:
 
     if voice_id:
         voice.set_eleven_voice(voice_id)
+    if mic is not None:
+        voice.set_mic(mic)
 
     if voice._has_eleven_key():
         click.echo("Voice: ElevenLabs (natural)")
