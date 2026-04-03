@@ -29,6 +29,7 @@ C:\Market_Intelligence\
 │   ├── scanner.py         # Core scan engine — API calls + web search
 │   ├── parser.py          # JSON extraction and normalization
 │   ├── outreach.py        # Outreach draft generator for HIGH findings
+│   ├── briefing.py        # Morning briefing generator + conversation context
 │   ├── reporter.py        # HTML report generator
 │   ├── emailer.py         # SMTP email delivery
 │   ├── storage.py         # SQLite persistence layer
@@ -58,6 +59,9 @@ pip install -r requirements.txt
 
 # Run a full scan
 python -m src.cli scan
+
+# Morning briefing — interactive conversation about latest scan
+python -m src.cli brief
 
 # Run a single category
 python -m src.cli scan --category transformation_failures

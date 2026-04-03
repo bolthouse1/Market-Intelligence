@@ -57,12 +57,34 @@ CREATE TABLE IF NOT EXISTS outreach_drafts (
     FOREIGN KEY (finding_id) REFERENCES findings(id)
 );
 
+CREATE TABLE IF NOT EXISTS conversation_log (
+    id TEXT PRIMARY KEY,
+    scan_id TEXT,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    companies_discussed TEXT,
+    categories_discussed TEXT,
+    findings_explored TEXT,
+    conversation_number INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS andrew_preferences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    preference_type TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value REAL NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(preference_type, key)
+);
+
 CREATE INDEX IF NOT EXISTS idx_findings_dedup ON findings(dedup_hash);
 CREATE INDEX IF NOT EXISTS idx_findings_created ON findings(created_at);
 CREATE INDEX IF NOT EXISTS idx_findings_company ON findings(company);
 CREATE INDEX IF NOT EXISTS idx_findings_category ON findings(category);
 CREATE INDEX IF NOT EXISTS idx_findings_scan_id ON findings(scan_id);
 CREATE INDEX IF NOT EXISTS idx_outreach_finding ON outreach_drafts(finding_id);
+CREATE INDEX IF NOT EXISTS idx_convo_scan ON conversation_log(scan_id);
+CREATE INDEX IF NOT EXISTS idx_prefs_type ON andrew_preferences(preference_type, key);
 """
 
 
@@ -317,5 +339,90 @@ def prune_old_data(days: int = 90, db_path: Path | None = None) -> int:
         conn.commit()
         logger.info(f"Pruned {deleted} findings older than {days} days")
         return deleted
+    finally:
+        conn.close()
+
+
+def get_conversation_count(db_path: Path | None = None) -> int:
+    """Get total number of briefing conversations held."""
+    conn = _get_connection(db_path)
+    try:
+        return conn.execute("SELECT COUNT(*) FROM conversation_log").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def log_conversation(convo: dict, db_path: Path | None = None) -> None:
+    """Log a completed briefing conversation."""
+    conn = _get_connection(db_path)
+    try:
+        # Get next conversation number
+        count = conn.execute("SELECT COUNT(*) FROM conversation_log").fetchone()[0]
+        conn.execute(
+            """INSERT INTO conversation_log (id, scan_id, started_at, ended_at,
+               companies_discussed, categories_discussed, findings_explored,
+               conversation_number)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                convo["id"],
+                convo.get("scan_id"),
+                convo["started_at"],
+                convo.get("ended_at"),
+                json.dumps(convo.get("companies_discussed", [])),
+                json.dumps(convo.get("categories_discussed", [])),
+                json.dumps(convo.get("findings_explored", [])),
+                count + 1,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_preference(
+    pref_type: str, key: str, value: float, db_path: Path | None = None
+) -> None:
+    """Upsert a preference score (e.g., category interest, company interest)."""
+    conn = _get_connection(db_path)
+    try:
+        conn.execute(
+            """INSERT INTO andrew_preferences (preference_type, key, value, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(preference_type, key)
+               DO UPDATE SET value = value + ?, updated_at = ?""",
+            (pref_type, key, value, datetime.utcnow().isoformat(),
+             value, datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_preferences(pref_type: str | None = None, db_path: Path | None = None) -> list[dict]:
+    """Get preference scores, optionally filtered by type."""
+    conn = _get_connection(db_path)
+    try:
+        if pref_type:
+            rows = conn.execute(
+                "SELECT * FROM andrew_preferences WHERE preference_type = ? ORDER BY value DESC",
+                (pref_type,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM andrew_preferences ORDER BY preference_type, value DESC"
+            ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_latest_scan_id(db_path: Path | None = None) -> str | None:
+    """Get the most recent scan run ID."""
+    conn = _get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT id FROM scan_runs ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()
+        return row["id"] if row else None
     finally:
         conn.close()

@@ -11,7 +11,7 @@ import click
 import yaml
 from dotenv import load_dotenv
 
-from . import dedup, emailer, outreach, parser, reporter, scanner, storage
+from . import briefing, dedup, emailer, outreach, parser, reporter, scanner, storage
 
 load_dotenv()
 
@@ -147,6 +147,108 @@ def scan(category: str | None, dry_run: bool, no_email: bool) -> None:
             click.echo(f"Email failed: {e}. Report saved to {report_path}", err=True)
 
     click.echo("Scan complete.")
+
+
+@cli.command()
+def brief() -> None:
+    """Launch the morning briefing — conversational review of the latest scan."""
+    storage.init_db()
+
+    scan_id = storage.get_latest_scan_id()
+    if not scan_id:
+        click.echo("No scans found. Run a scan first: python -m src.cli scan")
+        return
+
+    # Generate the briefing
+    click.echo("Loading today's intel...\n")
+    brief_text = briefing.generate_briefing(scan_id)
+    click.echo(brief_text)
+    click.echo()
+
+    # Build context for follow-up conversation
+    context = briefing.build_context_for_conversation(scan_id)
+
+    # Log the conversation start
+    convo_id = str(uuid.uuid4())
+    storage.log_conversation({
+        "id": convo_id,
+        "scan_id": scan_id,
+        "started_at": datetime.utcnow().isoformat(),
+        "companies_discussed": [],
+        "categories_discussed": [],
+        "findings_explored": [],
+    })
+
+    # Interactive conversation loop
+    client = __import__("anthropic").Anthropic()
+    messages = [
+        {"role": "assistant", "content": brief_text},
+    ]
+
+    companies_discussed = []
+    categories_discussed = []
+
+    while True:
+        try:
+            user_input = click.prompt("Andrew", prompt_suffix=" > ", default="", show_default=False)
+        except (EOFError, KeyboardInterrupt):
+            break
+
+        if not user_input.strip():
+            continue
+        if user_input.strip().lower() in ("quit", "exit", "done", "bye", "later"):
+            # Generate sign-off
+            messages.append({"role": "user", "content": user_input})
+            messages.append({"role": "user", "content": "(Andrew is wrapping up. Give a short sign-off and ask ONE question about how you can improve — keep it real, one sentence.)"})
+            response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=200,
+                system=context,
+                messages=messages,
+            )
+            sign_off = "\n".join(b.text for b in response.content if b.type == "text").strip()
+            click.echo(f"\n{sign_off}\n")
+
+            # Update conversation log
+            storage.log_conversation({
+                "id": str(uuid.uuid4()),
+                "scan_id": scan_id,
+                "started_at": datetime.utcnow().isoformat(),
+                "ended_at": datetime.utcnow().isoformat(),
+                "companies_discussed": companies_discussed,
+                "categories_discussed": categories_discussed,
+                "findings_explored": [],
+            })
+
+            # Update preferences based on what was discussed
+            for company in companies_discussed:
+                storage.update_preference("company_interest", company, 1.0)
+            for cat in categories_discussed:
+                storage.update_preference("category_interest", cat, 1.0)
+
+            break
+
+        messages.append({"role": "user", "content": user_input})
+
+        # Track what Andrew is asking about
+        findings = storage.get_findings_by_scan(scan_id)
+        for f in findings:
+            if f["company"].lower() in user_input.lower():
+                if f["company"] not in companies_discussed:
+                    companies_discussed.append(f["company"])
+                if f["category"] not in categories_discussed:
+                    categories_discussed.append(f["category"])
+
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=800,
+            system=context,
+            messages=messages,
+        )
+
+        reply = "\n".join(b.text for b in response.content if b.type == "text").strip()
+        messages.append({"role": "assistant", "content": reply})
+        click.echo(f"\n{reply}\n")
 
 
 @cli.command()
