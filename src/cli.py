@@ -252,9 +252,13 @@ def brief() -> None:
 
 
 @cli.command("voice-brief")
-@click.option("--voice", default="en-US-GuyNeural", help="TTS voice (try en-US-BrianNeural, en-US-AndrewNeural)")
-def voice_brief(voice: str) -> None:
-    """Launch voice-powered morning briefing — speak and listen."""
+@click.option("--voice-id", default=None, help="ElevenLabs voice ID override")
+def voice_brief(voice_id: str | None) -> None:
+    """Launch voice-powered morning briefing — speak and listen.
+
+    Uses ElevenLabs for natural voice (set ELEVENLABS_API_KEY in .env).
+    Falls back to edge-tts if no key is set.
+    """
     storage.init_db()
 
     scan_id = storage.get_latest_scan_id()
@@ -262,17 +266,24 @@ def voice_brief(voice: str) -> None:
         click.echo("No scans found. Run a scan first: python -m src.cli scan")
         return
 
-    voice_mod = voice  # rename to avoid shadowing
-    voice_module = __import__("src.voice", fromlist=["voice"])
-    voice_module.set_voice(voice_mod)
+    if voice_id:
+        voice.set_eleven_voice(voice_id)
+
+    if voice._has_eleven_key():
+        click.echo("Voice: ElevenLabs (natural)")
+    else:
+        click.echo("Voice: edge-tts (set ELEVENLABS_API_KEY in .env for better quality)")
 
     click.echo("Loading today's intel...\n")
 
-    # Generate and speak the briefing
+    # Generate the briefing text
     brief_text = briefing.generate_briefing(scan_id)
     click.echo(brief_text)
     click.echo()
-    voice_module.speak(brief_text)
+
+    # Speak in chunks by paragraph for natural pacing
+    paragraphs = [p.strip() for p in brief_text.split("\n\n") if p.strip()]
+    voice.speak_streamed(paragraphs)
 
     # Build context for conversation
     context = briefing.build_context_for_conversation(scan_id)
@@ -297,7 +308,7 @@ def voice_brief(voice: str) -> None:
     while True:
         # Listen for Andrew
         click.echo("\n  [Say something, or press Ctrl+C to exit]\n")
-        user_input = voice_module.listen(timeout=15, phrase_time_limit=60)
+        user_input = voice.listen(timeout=15, phrase_time_limit=60)
 
         if user_input is None:
             click.echo("  Didn't catch that. Try again or press Ctrl+C to exit.")
@@ -306,7 +317,8 @@ def voice_brief(voice: str) -> None:
         click.echo(f"  Andrew: {user_input}\n")
 
         # Check for exit
-        exit_words = {"quit", "exit", "done", "bye", "later", "that's it", "we're done", "i'm done", "peace"}
+        exit_words = {"quit", "exit", "done", "bye", "later", "that's it",
+                      "we're done", "i'm done", "peace", "we are done"}
         if any(word in user_input.lower() for word in exit_words):
             messages.append({"role": "user", "content": user_input})
             messages.append({"role": "user", "content": "(Andrew is wrapping up. Give a short sign-off and ask ONE question about how you can improve — keep it real, one sentence.)"})
@@ -318,7 +330,7 @@ def voice_brief(voice: str) -> None:
             )
             sign_off = "\n".join(b.text for b in response.content if b.type == "text").strip()
             click.echo(f"\n{sign_off}\n")
-            voice_module.speak(sign_off)
+            voice.speak(sign_off)
 
             # Log preferences
             for company in companies_discussed:
@@ -347,7 +359,13 @@ def voice_brief(voice: str) -> None:
         reply = "\n".join(b.text for b in response.content if b.type == "text").strip()
         messages.append({"role": "assistant", "content": reply})
         click.echo(f"\n{reply}\n")
-        voice_module.speak(reply)
+
+        # Speak in chunks for faster perceived response
+        chunks = [p.strip() for p in reply.split("\n\n") if p.strip()]
+        if len(chunks) > 1:
+            voice.speak_streamed(chunks)
+        else:
+            voice.speak(reply)
 
 
 @cli.command()
