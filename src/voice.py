@@ -17,8 +17,9 @@ import speech_recognition as sr
 logger = logging.getLogger(__name__)
 
 # ElevenLabs config
-ELEVEN_VOICE_ID = "pNInz6obpgDQGcFmaJgB"  # "Adam" — deep, natural, confident
-ELEVEN_MODEL = "eleven_turbo_v2_5"  # Fastest model, still great quality
+ELEVEN_VOICE_ID = "iP95p4xoKVk53GoZ742B"  # "Chris" — charming, down-to-earth, casual
+ELEVEN_MODEL = "eleven_turbo_v2_5"  # Fastest model — ~2-3x faster than multilingual_v2
+ELEVEN_SPEED = 1.2  # Quick but natural
 
 # Edge-tts fallback config
 EDGE_VOICE = "en-US-GuyNeural"
@@ -81,12 +82,19 @@ def _speak_eleven(text: str) -> None:
 
     client = ElevenLabs(api_key=os.environ["ELEVENLABS_API_KEY"])
 
-    # Generate audio
+    # Generate audio with voice settings for natural delivery
+    from elevenlabs import VoiceSettings
     audio_gen = client.text_to_speech.convert(
         voice_id=ELEVEN_VOICE_ID,
         text=text,
         model_id=ELEVEN_MODEL,
         output_format="mp3_44100_128",
+        voice_settings=VoiceSettings(
+            stability=0.4,          # Lower = more expressive, less robotic
+            similarity_boost=0.75,  # Keep the voice character
+            style=0.35,             # Add some style/energy
+            use_speaker_boost=True,
+        ),
     )
 
     # Collect the streamed bytes
@@ -183,6 +191,8 @@ def _clean_for_speech(text: str) -> str:
     # Clean up currency symbols for better pronunciation
     text = text.replace("€", " euros")
     text = text.replace("£", " pounds")
+    # Make "Braaah" sound right — like "bruh" but drawn out, the way kids say it
+    text = re.sub(r"Braaah?", "Bruhhhhh", text, flags=re.IGNORECASE)
     # Add natural pauses after big numbers (helps pacing)
     text = re.sub(r"(\$[\d,.]+\s*(?:billion|million|trillion|B|M))", r"\1.", text)
     # Clean up multiple spaces/newlines
