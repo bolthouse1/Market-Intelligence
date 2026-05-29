@@ -251,6 +251,38 @@ def listen(timeout: int = 10, phrase_time_limit: int = 30) -> str | None:
         return None
 
 
+_CURRENCY_WORDS = {"$": "dollars", "€": "euros", "£": "pounds"}
+_SCALE_WORDS = {
+    "k": "thousand", "m": "million", "b": "billion", "t": "trillion",
+    "bn": "billion", "mn": "million", "thousand": "thousand",
+    "million": "million", "billion": "billion", "trillion": "trillion",
+}
+_CURRENCY_RE = re.compile(
+    r"([$€£])\s?(\d[\d,]*(?:\.\d+)?)\s*"
+    r"(bn|mn|thousand|million|billion|trillion|[KMBT])?\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _normalize_currency(text: str) -> str:
+    """Convert symbol-prefixed amounts to spoken words ("$2.5B" -> "2.5 billion dollars").
+
+    Handles $/€/£ with optional K/M/B/T (or spelled-out) scale suffixes. A trailing
+    period is appended after scaled amounts for natural pacing.
+    """
+    def _repl(m: "re.Match[str]") -> str:
+        symbol, number, scale = m.group(1), m.group(2), m.group(3)
+        words = number
+        if scale:
+            words += " " + _SCALE_WORDS[scale.lower()]
+        words += " " + _CURRENCY_WORDS[symbol]
+        # Pace out scaled amounts with a short pause (comma, not a full stop —
+        # a period mid-sentence makes TTS drop intonation as if it ended)
+        return words + "," if scale else words
+
+    return _CURRENCY_RE.sub(_repl, text)
+
+
 def _clean_for_speech(text: str) -> str:
     """Strip markdown and formatting for cleaner, more natural TTS."""
     # Remove markdown bold/italic
@@ -262,13 +294,15 @@ def _clean_for_speech(text: str) -> str:
     text = re.sub(r"^[-•]\s+", "", text, flags=re.MULTILINE)
     # Remove URLs
     text = re.sub(r"https?://\S+", "", text)
-    # Clean up currency symbols for better pronunciation
-    text = text.replace("€", " euros")
-    text = text.replace("£", " pounds")
+    # Spell out currency amounts ("$2B" -> "2 billion dollars") for natural TTS
+    text = _normalize_currency(text)
+    # Any stray currency symbols (no amount attached) — say the word
+    text = text.replace("$", " dollars").replace("€", " euros").replace("£", " pounds")
     # Make "Braaah" sound right — casual drawn out bra-ahh
     text = re.sub(r"Braaah?", "Brahh ahh", text, flags=re.IGNORECASE)
-    # Add natural pauses after big numbers (helps pacing)
-    text = re.sub(r"(\$[\d,.]+\s*(?:billion|million|trillion|B|M))", r"\1.", text)
+    # Collapse pacing commas that bumped into existing punctuation (",." -> "." etc.)
+    text = re.sub(r",\s*([.!?,;:])", r"\1", text)
+    text = re.sub(r"([.!?])[.,]+", r"\1", text)
     # Clean up multiple spaces/newlines
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"  +", " ", text)
